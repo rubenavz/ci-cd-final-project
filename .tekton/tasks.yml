@@ -35,6 +35,42 @@ spec:
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
+  name: git-clone
+spec:
+  params:
+    - name: url
+      type: string
+  workspaces:
+    - name: output
+  steps:
+    - name: git-clone
+      image: alpine/git
+      script: |
+        #!/bin/sh
+        git clone $(params.url) $(workspaces.output.path)
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: lint
+spec:
+  workspaces:
+    - name: output
+  steps:
+    - name: lint
+      image: python:3.9-slim
+      workingDir: $(workspaces.output.path)
+      script: |
+        #!/bin/bash
+        pip install flake8
+        flake8 service --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 service --count --max-complexity=10 --max-line-length=127 --statistics
+
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
   name: nose-tests
 spec:
   workspaces:
@@ -55,40 +91,7 @@ spec:
         pip install -r requirements.txt
         pip install nose coverage
         nosetests $(params.args)
----
-apiVersion: tekton.dev/v1
-kind: Task
-metadata:
-  name: lint
-spec:
-  workspaces:
-    - name: output
-  steps:
-    - name: lint
-      image: python:3.9-slim
-      workingDir: $(workspaces.output.path)
-      script: |
-        #!/bin/bash
-        pip install flake8
-        flake8 service --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 service --count --max-complexity=10 --max-line-length=127 --statistics
----
-apiVersion: tekton.dev/v1
-kind: Task
-metadata:
-  name: git-clone
-spec:
-  params:
-    - name: url
-      type: string
-  workspaces:
-    - name: output
-  steps:
-    - name: git-clone
-      image: alpine/git
-      script: |
-        #!/bin/sh
-        git clone $(params.url) $(workspaces.output.path)
+
 ---
 apiVersion: tekton.dev/v1
 kind: Task
@@ -114,7 +117,7 @@ spec:
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: oc-deploy
+  name: oc
 spec:
   params:
     - name: app-name
@@ -122,8 +125,9 @@ spec:
     - name: build-image
       type: string
   steps:
-    - name: deploy-app
+    - name: deploy
       image: quay.io/openshift/origin-cli:latest
       script: |
         #!/bin/sh
-        oc create deployment $(params.app-name) --image=$(params.build-image) --dry-run=client -o yaml | oc apply -f -
+        DEPLOY_YAML=$(oc create deployment "$(params.app-name)" --image="$(params.build-image)" --dry-run=client -o yaml)
+        echo "$DEPLOY_YAML" | oc apply -f -
