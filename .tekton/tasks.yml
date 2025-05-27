@@ -104,20 +104,21 @@ spec:
   workspaces:
     - name: output
   steps:
-    - name: build-and-push
-      image: quay.io/buildah/stable
-      securityContext:
-        privileged: true
+    - name: step-01-buildah-and-push
+      image: gcr.io/kaniko-project/executor:latest
       workingDir: $(workspaces.output.path)
+      env:
+        - name: DOCKER_CONFIG
+          value: /tekton/home/.docker/
       script: |
-        #!/bin/sh
-        buildah bud -t $(params.IMAGE) .
-        buildah push $(params.IMAGE)
+        #!/busybox/sh
+        /kaniko/executor --dockerfile=Dockerfile --context=$(workspaces.output.path) --destination=$(params.IMAGE)
+
 ---
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: oc
+  name: oc-deploy
 spec:
   params:
     - name: app-name
@@ -125,9 +126,9 @@ spec:
     - name: build-image
       type: string
   steps:
-    - name: deploy
+    - name: step-01-deploy-app
       image: quay.io/openshift/origin-cli:latest
       script: |
         #!/bin/sh
-        DEPLOY_YAML=$(oc create deployment "$(params.app-name)" --image="$(params.build-image)" --dry-run=client -o yaml)
-        echo "$DEPLOY_YAML" | oc apply -f -
+        oc delete deployment "$(params.app-name)" --ignore-not-found
+        oc create deployment "$(params.app-name)" --image="$(params.build-image)"
