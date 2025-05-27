@@ -4,18 +4,18 @@ metadata:
   name: cleanup
 spec:
   workspaces:
-    - name: source
+    - name: output
   steps:
     - name: remove
       image: alpine:3
       env:
-        - name: WORKSPACE_SOURCE_PATH
-          value: $(workspaces.source.path)
-      workingDir: $(workspaces.source.path)
+        - name: WORKSPACE_OUTPUT_PATH
+          value: $(workspaces.output.path)
+      workingDir: $(workspaces.output.path)
       securityContext:
         runAsNonRoot: false
         runAsUser: 0
-      script: |
+      sscript: |
         #!/usr/bin/env sh
         set -eu
         echo "Removing all files from ${WORKSPACE_SOURCE_PATH} ..."
@@ -38,19 +38,92 @@ metadata:
   name: nose
 spec:
   workspaces:
-    - name: source
+    - name: output
   params:
     - name: args
       description: Arguments to pass to nose
       type: string
-      default: "-v"
+      default: "-v --with-coverage --cover-package=app"
   steps:
     - name: nosetests
       image: python:3.9-slim
-      workingDir: $(workspaces.source.path)
+      workingDir: $(workspaces.output.path)
       script: |
         #!/bin/bash
         set -e
         python -m pip install --upgrade pip wheel
         pip install -r requirements.txt
+        pip install nose coverage
         nosetests $(params.args)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: lint
+spec:
+  workspaces:
+    - name: output
+  steps:
+    - name: run-flake8
+      image: python:3.9-slim
+      workingDir: $(workspaces.output.path)
+      script: |
+        #!/bin/bash
+        pip install flake8
+        flake8 service --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 service --count --max-complexity=10 --max-line-length=127 --statistics
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: git-clone
+spec:
+  params:
+    - name: url
+      type: string
+  workspaces:
+    - name: output
+  steps:
+    - name: clone-repo
+      image: alpine/git
+      script: |
+        #!/bin/sh
+        git clone $(params.url) $(workspaces.output.path)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildah
+spec:
+  params:
+    - name: IMAGE
+      type: string
+  workspaces:
+    - name: output
+  steps:
+    - name: build-and-push
+      image: quay.io/buildah/stable
+      securityContext:
+        privileged: true
+      workingDir: $(workspaces.output.path)
+      script: |
+        #!/bin/sh
+        buildah bud -t $(params.IMAGE) .
+        buildah push $(params.IMAGE)
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: oc-deploy
+spec:
+  params:
+    - name: app-name
+      type: string
+    - name: build-image
+      type: string
+  steps:
+    - name: deploy-app
+      image: quay.io/openshift/origin-cli:latest
+      script: |
+        #!/bin/sh
+        oc create deployment $(params.app-name) --image=$(params.build-image) --dry-run=client -o yaml | oc apply -f -
