@@ -104,15 +104,15 @@ spec:
   workspaces:
     - name: output
   steps:
-    - name: step-01-buildah-and-push
+    - name: step-01-buildah-build
       image: gcr.io/kaniko-project/executor:latest
       workingDir: $(workspaces.output.path)
-      env:
-        - name: DOCKER_CONFIG
-          value: /tekton/home/.docker/
-      script: |
-        #!/busybox/sh
-        /kaniko/executor --dockerfile=Dockerfile --context=$(workspaces.output.path) --destination=$(params.IMAGE)
+      args:
+        - "--dockerfile=Dockerfile"
+        - "--context=$(workspaces.output.path)"
+        - "--destination=$(params.IMAGE)"
+        - "--insecure"
+        - "--skip-tls-verify"
 
 ---
 apiVersion: tekton.dev/v1
@@ -131,4 +131,4 @@ spec:
       script: |
         #!/bin/sh
         oc delete deployment "$(params.app-name)" --ignore-not-found
-        oc create deployment "$(params.app-name)" --image="$(params.build-image)"
+        oc create deployment "$(params.app-name)" --image=$(params.build-image)
